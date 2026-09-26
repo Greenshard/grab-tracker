@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grab Tracker</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <style>
+    :root {
+      --bg: #f4f4f2;
+      --card: #ffffff;
+      --text: #1c1c1a;
+      --muted: #6b6b66;
+      --border: rgba(0, 0, 0, 0.08);
+      --shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+      --driver: #00b140;
+      --pickup: #e8590c;
+      --dropoff: #2563eb;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1a1a;
+        --card: #242424;
+        --text: #ececea;
+        --muted: #9a9a95;
+        --border: rgba(255, 255, 255, 0.08);
+        --shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+        --pickup: #fd7e3a;
+        --dropoff: #5b8cff;
+      }
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    #map { position: fixed; inset: 0; background: var(--bg); }
+    @media (prefers-color-scheme: dark) {
+      .leaflet-tile-pane { filter: brightness(0.8) saturate(0.85); }
+    }
+
+    .card {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 1000;
+      width: min(320px, calc(100vw - 32px));
+      padding: 14px 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+    }
+    .status { margin: 0 0 4px; font-size: 16px; font-weight: 600; text-wrap: balance; }
+    .line { margin: 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .dist { display: flex; gap: 16px; margin: 10px 0 0; font-variant-numeric: tabular-nums; }
+    .dist b { font-weight: 600; }
+    .dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; }
+    .error { color: #d9480f; }
+
+    form { display: flex; gap: 8px; margin-top: 10px; }
+    input {
+      flex: 1;
+      min-width: 0;
+      padding: 8px 10px;
+      font: inherit;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    button {
+      padding: 8px 12px;
+      font: inherit;
+      font-weight: 600;
+      color: #fff;
+      background: var(--driver);
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #recenter {
+      position: fixed;
+      right: 16px;
+      bottom: 96px;
+      z-index: 1000;
+      display: none;
+      color: var(--text);
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    /* Map markers */
+    .pin {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      border: 3px solid #fff;
+      border-radius: 50% 50% 50% 0;
+      transform: rotate(-45deg);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    }
+    .pin svg { position: absolute; inset: 0; margin: auto; width: 16px; height: 16px; transform: rotate(45deg); }
+    .pin.pickup { background: var(--pickup); }
+    .pin.dropoff { background: var(--dropoff); }
+    .driver {
+      position: relative;
+      width: 22px;
+      height: 22px;
+      background: var(--driver);
+      border: 3px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    }
+    .driver::after {
+      content: "";
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      background: var(--driver);
+      opacity: 0.5;
+      animation: pulse 2s ease-out infinite;
+      z-index: -1;
+    }
+    @keyframes pulse { to { transform: scale(3); opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .driver::after { animation: none; } }
+
+    .leaflet-tooltip.label {
+      padding: 2px 8px;
+      font: 600 12px/1.5 system-ui, sans-serif;
+      color: var(--text);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+    }
+    .leaflet-tooltip.label::before { display: none; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="card" id="card">
+    <p class="status" id="status">Loading…</p>
+    <p class="line" id="driver"></p>
+    <div class="dist" id="dist" hidden>
+      <span><i class="dot" style="background: var(--pickup)"></i><b id="pickupKm"></b> to <span id="pickupName"></span></span>
+      <span><i class="dot" style="background: var(--dropoff)"></i><b id="dropoffKm"></b> to you</span>
+    </div>
+    <p class="line" id="updated"></p>
+    <form id="form" hidden>
+      <input id="link" placeholder="Paste a sharelocation.grab.com link" autocomplete="off" />
+      <button>Track</button>
+    </form>
+  </div>
+
+  <button id="recenter" type="button">Recenter</button>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script>
+    const POLL_MS = 5000;
+    const ENDED = /^(COMPLETED|FAILED|CANCELLED)/;
+    const $ = (id) => document.getElementById(id);
+
+    const token = location.pathname.match(/^\/o\/([A-Za-z0-9]+)/)?.[1];
+
+    const map = L.map("map", { zoomControl: false }).setView([10.3157, 123.8854], 13);
+    L.control.zoom({ position: "bottomright" }).addTo(map);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+
+    const ICONS = {
+      pickup: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M8 2v7a2 2 0 0 1-1.5 1.94V22h-2V10.94A2 2 0 0 1 3 9V2h1.5v6h1V2h1v6h1V2H8zm8 0c2.2 0 4 2.24 4 5v5h-2v10h-2V2z"/></svg>',
+      dropoff: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 3 2 11.5h3V21h5.5v-6h3v6H19v-9.5h3z"/></svg>',
+    };
+    const pinIcon = (kind) => L.divIcon({
+      className: "",
+      html: `<div class="pin ${kind}">${ICONS[kind]}</div>`,
+      iconSize: [32, 32],
+      iconAnchor: [16, 38],
+      tooltipAnchor: [0, -38],
+    });
+    const driverIcon = L.divIcon({ className: "", html: '<div class="driver"></div>', iconSize: [22, 22], iconAnchor: [11, 11], tooltipAnchor: [0, -14] });
+
+    let pickup, dropoff, driver, timer, busy = false;
+    let lastFix = null;       // { lat, lng, since } — when the driver position last changed
+    let autoFit = true;       // refit all markers each update until the user moves the map
+    let fitting = false;
+
+    map.on("dragstart zoomstart", () => {
+      if (!fitting) { autoFit = false; $("recenter").style.display = "block"; }
+    });
+    $("recenter").onclick = () => { autoFit = true; $("recenter").style.display = "none"; fit(); };
+
+    function fit() {
+      const pts = [pickup, dropoff, driver].filter(Boolean).map((m) => m.getLatLng());
+      if (!pts.length) return;
+      fitting = true;
+      map.once("moveend", () => (fitting = false));
+      const top = window.innerWidth < 600 ? $("card").offsetHeight + 32 : 40;
+      const left = window.innerWidth < 600 ? 40 : $("card").offsetWidth + 56;
+      map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [left, top], paddingBottomRight: [60, 60], maxZoom: 16 });
+    }
+
+    function km(a, b) {
+      const R = 6371, rad = Math.PI / 180;
+      const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    }
+    const shortName = (s) => s?.split(" - ")[0] || "pickup";
+    const fmtKm = (d) => (d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`);
+
+    // Slide the driver marker to its new position instead of jumping.
+    function moveDriver(to) {
+      const from = driver.getLatLng();
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) return driver.setLatLng(to);
+      const start = performance.now();
+      const step = (t) => {
+        const k = Math.min(1, (t - start) / 1000);
+        driver.setLatLng([from.lat + (to.lat - from.lat) * k, from.lng + (to.lng - from.lng) * k]);
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
+
+    function render(data) {
+      const b = data.booking, d = data.driver;
+      const p = L.latLng(b.pickup.location.latitude, b.pickup.location.longitude);
+      const q = L.latLng(b.dropOff.location.latitude, b.dropOff.location.longitude);
+
+      if (!pickup) {
+        pickup = L.marker(p, { icon: pinIcon("pickup"), title: b.pickup.keywords || "Pickup" }).addTo(map)
+          .bindTooltip(shortName(b.pickup.keywords), { permanent: true, direction: "top", className: "label" });
+        dropoff = L.marker(q, { icon: pinIcon("dropoff"), title: "Delivery" }).addTo(map)
+          .bindTooltip("Delivery", { permanent: true, direction: "top", className: "label" });
+      }
+
+      $("status").textContent = data.messageStatus?.title || b.bookingState.replaceAll("_", " ").toLowerCase();
+
+      if (d?.location) {
+        const loc = L.latLng(d.location.latitude, d.location.longitude);
+        if (!driver) {
+          driver = L.marker(loc, { icon: driverIcon, zIndexOffset: 1000, title: "Driver" }).addTo(map)
+            .bindTooltip("Driver", { direction: "top", className: "label" });
+        } else if (!driver.getLatLng().equals(loc)) {
+          moveDriver(loc);
+        }
+        if (!lastFix || lastFix.lat !== loc.lat || lastFix.lng !== loc.lng) lastFix = { lat: loc.lat, lng: loc.lng, since: Date.now() };
+
+        $("driver").textContent = [d.name, d.vehicleModel, d.vehiclePlateNumber].filter(Boolean).join(" · ");
+        $("pickupKm").textContent = fmtKm(km(loc, p));
+        $("pickupName").textContent = shortName(b.pickup.keywords);
+        $("dropoffKm").textContent = fmtKm(km(loc, q));
+        $("dist").hidden = false;
+      }
+
+      if (autoFit) fit();
+      if ((data.sessionStatus && data.sessionStatus !== "ACTIVE") || ENDED.test(b.bookingState)) stop("Tracking ended.");
+    }
+
+    function stop(msg) {
+      clearTimeout(timer);
+      timer = null;
+      $("updated").textContent = msg;
+    }
+
+    async function poll() {
+      clearTimeout(timer);
+      if (busy) return;
+      busy = true;
+      if (!document.hidden) {
+        try {
+          const res = await fetch(`/api/${token}`, { cache: "no-store" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.booking) throw new Error(data.error || `HTTP ${res.status}`);
+          render(data);
+          $("updated").classList.remove("error");
+        } catch (err) {
+          $("updated").textContent = `Could not load: ${err.message}. Retrying…`;
+          $("updated").classList.add("error");
+        }
+      }
+      busy = false;
+      if (timer !== null) timer = setTimeout(poll, POLL_MS);
+    }
+
+    // Show how old the driver's position is, so a stale feed is obvious.
+    setInterval(() => {
+      if (!lastFix || timer === null || $("updated").classList.contains("error")) return;
+      const s = Math.round((Date.now() - lastFix.since) / 1000);
+      $("updated").textContent = s < 5 ? "Position just updated" : `Position updated ${s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`} ago`;
+    }, 1000);
+
+    if (token) {
+      timer = 0;
+      poll();
+    } else {
+      $("status").textContent = "Track a Grab order";
+      $("form").hidden = false;
+      $("form").onsubmit = (e) => {
+        e.preventDefault();
+        const t = $("link").value.match(/\/o\/([A-Za-z0-9]+)/)?.[1] || $("link").value.trim();
+        if (/^[A-Za-z0-9]+$/.test(t)) location.href = `/o/${t}`;
+      };
+    }
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && timer !== null) poll(); });
+  </script>
+</body>
+</html>
