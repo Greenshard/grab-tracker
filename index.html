@@ -153,7 +153,7 @@
     </div>
     <p class="line" id="updated"></p>
     <form id="form" hidden>
-      <input id="link" placeholder="Paste a sharelocation.grab.com link" autocomplete="off" />
+      <input id="link" placeholder="Paste a Grab share link" autocomplete="off" />
       <button>Track</button>
     </form>
   </div>
@@ -306,7 +306,10 @@
       $("form").hidden = false;
       $("form").onsubmit = (e) => {
         e.preventDefault();
-        const t = $("link").value.match(/\/o\/([A-Za-z0-9]+)/)?.[1] || $("link").value.trim();
+        const link = $("link").value.trim();
+        const code = link.match(/app\.grab\.com\/s\/([A-Za-z0-9]+)/)?.[1];
+        if (code) return (location.href = `/s/${code}`);
+        const t = link.match(/\/o\/([A-Za-z0-9]+)/)?.[1] || link;
         if (/^[A-Za-z0-9]+$/.test(t)) location.href = `/o/${t}`;
       };
     }

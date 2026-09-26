@@ -1,7 +1,9 @@
 # grab-tracker — live map for a Grab share-location link (grab.pshard.com).
 #
 # Open https://grab.pshard.com/o/<token>, where <token> is the last segment of
-# a sharelocation.grab.com/o/... link, or open the root and paste the link.
+# a sharelocation.grab.com/o/... link. Short links work the same way:
+# app.grab.com/s/<code> becomes grab.pshard.com/s/<code>. Or open the root and
+# paste either link.
 #
 # api.grab.com refuses browser requests from any origin except Grab's own
 # share page, so server.ts proxies that one endpoint for index.html.
